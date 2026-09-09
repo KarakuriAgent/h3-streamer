@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>h3-stream overlay</title>
+    <style>
+      /* 自前合成（SPEC §8-B）に重ねる前提。背景は完全透過。 */
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+      body { font-family: "Noto Sans JP", system-ui, sans-serif; }
+      #comments {
+        position: absolute; top: 24px; right: 24px; width: 380px; max-height: 70vh;
+        display: flex; flex-direction: column-reverse; gap: 8px; overflow: hidden;
+      }
+      .comment {
+        background: rgba(6, 12, 24, 0.62); border-left: 3px solid rgba(120, 190, 255, 0.5);
+        border-radius: 8px; padding: 8px 12px; color: #eef4ff; font-size: 17px; line-height: 1.45;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); transition: all 160ms ease;
+      }
+      .comment.highlight {
+        background: rgba(24, 84, 168, 0.85); border-left-color: #8fd6ff;
+        transform: scale(1.03); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+      }
+      .author { display: block; font-size: 13px; color: #8fd6ff; font-weight: 700; }
+      #subtitle {
+        position: absolute; left: 50%; bottom: 56px; transform: translateX(-50%);
+        max-width: 78%; text-align: center; font-size: 34px; font-weight: 700; color: #fff;
+        background: rgba(4, 10, 22, 0.6); border-radius: 12px; padding: 10px 26px;
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85); transition: opacity 200ms ease; opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="comments"></div>
+    <div id="subtitle"></div>
+    <script type="module" src="/static/overlay.js"></script>
+  </body>
+</html>

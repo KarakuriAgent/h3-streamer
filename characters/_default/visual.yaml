@@ -1,0 +1,25 @@
+# 全キャラ共通の既定値。各キャラの characters/<name>/visual.yaml が同名キーを上書きする。
+#
+# identity と frame_rules は「キャラの同一性」と「画面内担保」の不変条件で、デーモンが毎回の
+# プロンプト先頭に全文付与する（エージェントは触らない）。実際にはキャラごとに具体化するのが前提で、
+# ここには汎用の文だけを置く。identity は _default では定義しない（必ずキャラ側で書くこと）。
+# 記述は英語。モデルは直前数秒と過去プロンプトしか参照しないため、「最初の画像と同じ」のような
+# 参照表現は使わず、毎回すべてを言葉で書き切る。
+
+style: >
+  Clean, consistent illustration style with stable lighting and smooth natural motion.
+  High detail, no style shifts between shots, no filters or stylization changes mid-stream.
+
+default_scene: >
+  A simple, well-lit indoor room. Medium shot from the front at roughly eye level,
+  the character centered and facing the camera.
+
+frame_rules: >
+  Everything of the character that is visible in the opening shot must remain fully inside
+  the frame at all times, including the head, face, shoulders, both arms and both hands.
+  The face stays clearly visible and turned roughly toward the camera. Keep the same framing
+  size: never crop tighter than the opening shot and never let any part of the character
+  leave the frame. The character is the only person in the shot. Never cut away from the
+  character, never show a shot without the character. Do not show any text, captions,
+  subtitles, chat window, comment feed, UI, logos, or on-screen overlays. Keep the
+  character's identity, face, hairstyle, clothing and accessories exactly consistent.

@@ -1,0 +1,32 @@
+# <キャラ名> の TTS 設定（雛形）。characters/_default/tts.yaml を上書きする。
+# 送り先は OpenAI 互換の音声合成 API（POST {base_url}/v1/audio/speech）。
+# サーバーの立て方は docs/setup.md §4。
+
+# 接続先。省略すると config/stream.yaml の tts.base_url。
+base_url: http://127.0.0.1:8020
+# 鍵が要るサーバーのときだけ。.env の TTS_API_KEY が優先される（yaml に鍵は書かない）。
+api_key: ""
+
+# `curl {base_url}/v1/models` で返るモデル ID。
+model: irodori-tts
+# サーバー側のボイス ID。Irodori-TTS-Server なら voices/<id>.wav の <id>。
+# reference.wav をそのキャラの声として使うなら、サーバーの voices/ に置いて id を書く。
+voice: <voice-id>
+speed: 1.0
+
+# サーバーが instructions を独自の場所で受けるときだけ書く（ドット表記）。
+# Irodori-TTS-Server は caption を irodori.caption で受ける。
+# instructions_field: irodori.caption
+
+# サーバー固有の追加フィールド。リクエスト本文にそのままマージされる。
+# extra_body:
+#   irodori:
+#     lora_adapter: <path-to-lora-checkpoint>
+#     cfg_scale_caption: 3.0
+
+# 話し方の指示。実際に送るのは instructions_default + emotion_instructions[emotion]。
+instructions_default: "<例：明るく元気な若い女性の声。近い距離感で親しげに話す。>"
+
+# 変えたい感情だけ書けばよい（_default/tts.yaml にマージされる）。
+emotion_instructions:
+  happy: "<例：とても嬉しそうに、弾んだ声で話す。>"

@@ -1,0 +1,62 @@
+# YouTube 配信の識別情報。秘密は .env / client_secret.json に置く（このファイルはコミットしてよい）。
+#
+# 事前準備は docs/youtube-setup.md を参照:
+#   api_key 方式（推奨）: Google Cloud で YouTube Data API v3 を有効化 → API キーを作成
+#                          → .env の YOUTUBE_API_KEY に設定 → 下の broadcast_id に動画 ID を書く
+#   oauth 方式:            OAuth クライアント（デスクトップアプリ）を作成 → client_secret.json を配置
+#                          → `h3 youtube auth` で認可
+
+enabled: true
+
+# api_key: .env の YOUTUBE_API_KEY で叩く（OAuth 不要。broadcast_id が必須）
+# oauth:   client_secret.json + `h3 youtube auth` の refresh token で叩く
+auth: api_key
+
+# --- oauth 方式でのみ使う ---------------------------------------------------
+# Google Cloud でダウンロードした OAuth クライアント JSON（デスクトップアプリ）。
+client_secret_path: ./config/client_secret.json
+
+# `h3 youtube auth` が refresh token を保存する場所。0600 で保存される。git に入れないこと。
+token_path: ./state/youtube_token.json
+# ---------------------------------------------------------------------------
+
+# 配信の動画 ID。
+#   https://www.youtube.com/watch?v=AbCdEfG1234  → "AbCdEfG1234"（v= の値）
+#   https://www.youtube.com/live/AbCdEfG1234     → "AbCdEfG1234"（YouTube Studio の共有リンク。同じ動画 ID）
+# URL を丸ごと貼っても動画 ID を自動で取り出す（watch?v= / live/ / youtu.be/ 形式に対応）。
+# api_key 方式では必須（API キーでは mine=true が使えないため）。空だとチャット取得が無効のまま起動する。
+# oauth 方式で空にすると liveBroadcasts.list(mine=true) の active → upcoming から自動選択する。
+broadcast_id: ""
+
+# ポーリング間隔の下限（ミリ秒）。実際には API の pollingIntervalMillis の方が大きければそちらに従う。
+poll_interval_ms: 5000
+
+# 配信者本人（この配信枠のチャンネル）のコメントを拾うか。
+# true（既定）: 自分のコメントも他の視聴者と同じように拾う（テスト中に自分で書いて確認できる）
+# false:        従来どおり配信者本人のコメントは除外する
+include_owner_comments: true
+
+# 部分一致・大文字小文字を無視して除外する語。
+# これに加えて「URL のみ」「同一ユーザーの直近 3 件以内の連投」は常に除外される。
+# 「配信者自身」は include_owner_comments: false のときだけ除外される。
+ng_words:
+  - 死ね
+  - 殺す
+  - きもい
+  - ブス
+  - 荒らし
+  - 晒す
+  - 個人情報
+  - 住所教えて
+  - 本名
+  - セックス
+  - エロ
+  - 宗教
+  - 政治
+  - 詐欺
+  - 稼げる
+  - 副業
+  - 儲かる
+  - 無料配布
+  - LINE追加
+  - 登録して

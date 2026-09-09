@@ -1,0 +1,49 @@
+# 全キャラ共通の TTS 既定値。各キャラの characters/<name>/voice/tts.yaml が上書きする。
+#
+# 送り先は OpenAI 互換の音声合成 API（POST {base_url}/v1/audio/speech）。
+# デーモンは JSON で {model, voice, input, instructions, response_format: "wav", speed} を送り、
+# 返ってきた wav をそのまま使う（サンプリングレートはヘッダから読むので 48kHz 固定ではない）。
+# サーバーの立て方は docs/setup.md §4。
+
+# 接続先。空なら config/stream.yaml の tts.base_url を使う。
+base_url: http://127.0.0.1:8020
+# 鍵が要るサーバーのときだけ。.env の TTS_API_KEY があればそちらが優先される（yaml に鍵は書かない）。
+api_key: ""
+
+# サーバーが公開しているモデル ID（`curl {base_url}/v1/models` で確認する）。
+model: irodori-tts
+# サーバー側のボイス ID。空ならサーバーの既定。
+voice: ""
+# 0.25〜4.0。1.0 が等速。
+speed: 1.0
+
+# instructions（話し方の指示）を入れるリクエスト本文のキー。既定は OpenAI 互換の `instructions`。
+# サーバーが独自の場所を使うならドット表記で指定する（例: Irodori-TTS-Server は irodori.caption）。
+# instructions_field: irodori.caption
+
+# サーバー固有の追加フィールド。リクエスト本文にそのままマージされる。
+# 例（Irodori-TTS-Server）:
+# extra_body:
+#   irodori:
+#     lora_adapter: <path-to-lora-checkpoint>
+#     cfg_scale_caption: 3.0
+#     num_steps: 32
+
+# emotion → instructions 変換表。`h3 speak --emotion <key>` で選ぶ。
+# 実際に送る instructions は「instructions_default + emotion_instructions[emotion]」。
+# 未知の emotion が来たら instructions_default だけを使う。
+instructions_default: "自然な話し方の声。近い距離感で親しげに話す。"
+
+emotion_instructions:
+  neutral: "落ち着いて、親しげに自然に話す。"
+  happy: "とても嬉しそうに、弾んだ声で話す。"
+  excited: "テンション高く、早口ぎみに勢いよく話す。"
+  surprised: "驚いて少し高い声で、テンポ早めに話す。"
+  shy: "照れくさそうに、少し小さめの声で話す。"
+  sad: "少ししょんぼりして、声を落として話す。"
+  thinking: "考えながら、ゆっくり間を置いて話す。"
+  laughing: "笑いをこらえながら、楽しそうに話す。"
+  gentle: "やわらかく、ゆっくり優しく話す。"
+  serious: "少し真面目なトーンで、はっきり丁寧に話す。"
+  curious: "興味しんしんで、語尾を上げぎみに話す。"
+  proud: "得意げに、少し胸を張った調子で話す。"

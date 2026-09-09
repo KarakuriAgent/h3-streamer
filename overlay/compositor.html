@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>h3-stream compositor</title>
+    <style>
+      /*
+        送出そのものの画は canvas（#stage）だけ。DOM の見た目は合成結果に影響しない。
+        headless Chromium ではこのページの表示は誰も見ないので、
+        人が目視するときに読める最小限だけ置いてある。
+      */
+      :root { color-scheme: dark; }
+      html, body { margin: 0; background: #05070d; color: #dfe7f5; font: 12px/1.6 system-ui, sans-serif; }
+      #stage { display: block; width: 100%; max-width: 1280px; margin: 0 auto; background: #000; }
+      /* Director の生映像。canvas への描画元なので画面には出さない。 */
+      #source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+      #status { padding: 6px 12px; background: #0b111c; color: #7fd0ff; font-family: ui-monospace, monospace; }
+      #log { margin: 0; padding: 8px 12px; white-space: pre-wrap; font-family: ui-monospace, monospace;
+             font-size: 11px; color: #93a3bd; max-height: 30vh; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <video id="source" autoplay playsinline muted></video>
+    <canvas id="stage" width="1280" height="720"></canvas>
+    <div id="status">starting…</div>
+    <pre id="log"></pre>
+    <script type="module" src="/static/compositor.js"></script>
+  </body>
+</html>

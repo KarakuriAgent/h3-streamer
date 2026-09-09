@@ -1,0 +1,18 @@
+node_modules/
+.env
+state/
+overlay/*.js
+overlay/*.js.map
+*.log
+characters/*/image.png.uploaded
+
+# キャラクター資産はインスタンス固有。雛形と説明だけを追跡する。
+characters/*
+!characters/_default/
+!characters/_example/
+!characters/README.md
+
+# インスタンス固有の設定・生成物（コミットしない）
+config/youtube.yaml
+characters/*/voice/*.uploaded
+__pycache__/

@@ -1,0 +1,38 @@
+# <キャラ名> の見た目（雛形）。characters/_default/visual.yaml を上書きする。
+#
+# **英語で書く。** ここに書いた identity / frame_rules はデーモンが毎回のプロンプト先頭に
+# 全文付与する不変条件で、オペレーター（エージェント）は触らない（docs/SPEC.md §3.1）。
+# モデルは初期画像を保持し続けないので、「最初の画像と同じ」のような参照表現は効かない。
+# 毎回すべてを言葉で書き切ること。
+
+# identity: image.png に映っている外見を全部言葉で固定する。
+#   髪型・髪色・目の色・帽子・眼鏡・ヘッドホン・服・アクセサリー・姿勢・机の上のものまで。
+#   最後は "Continue the current shot: the same ... with this exact face, hair, ... and outfit."
+#   の形で締める。
+identity: >
+  A <age> <appearance: e.g. young woman> with <hair length, color, style>, <eye color> eyes,
+  wearing <top / outfit with colors>, <accessories: cap, glasses, headphones, earrings ...>.
+  She is <posture: e.g. sitting at a wooden desk, facing the camera>, with <what is on the desk>.
+  Continue the current shot: the same <character> with this exact face, hair, <accessories>
+  and outfit.
+
+# frame_rules: image.png に映る要素を具体名で列挙し、それらが常にフレーム内に残ることを書く。
+#   _default の汎用文は雛形。必ずキャラごとに具体化して上書きする。
+frame_rules: >
+  Her <head, face, shoulders, both arms, both hands, cap, headphones, ...> must remain fully
+  inside the frame at all times. The face stays clearly visible and turned roughly toward the
+  camera. Keep the same framing size: never crop tighter than the opening shot and never let
+  any part of her leave the frame. She is the only person in the shot; never cut away from her.
+  Do not show any text, captions, subtitles, chat window, comment feed, UI, logos, or on-screen
+  overlays. Keep her identity, face, hairstyle, clothing and accessories exactly consistent.
+
+# style: 画風と照明。ショットごとにぶれさせない。
+style: >
+  <e.g. Clean anime illustration style, soft even lighting, high detail>, stable lighting and
+  smooth natural motion. No style shifts between shots, no filters or stylization changes.
+
+# default_scene: 初期の場面。**出したくないものも否定形で明記する**（否定を書かないと勝手に出る）。
+default_scene: >
+  <e.g. A small bedroom with a window on the left and a bookshelf behind her.> Medium shot from
+  the front at roughly eye level, the character centered and facing the camera.
+  Do not show <things that must not appear: e.g. other furniture, posters, plants, pets, screens>.
