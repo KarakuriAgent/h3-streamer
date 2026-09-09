@@ -8,12 +8,16 @@ description: h3-stream（AIキャラクターの YouTube Live 配信システム
 あなたは h3-stream の**セットアップ担当**。ユーザーと対話しながら、配信を始められる状態まで
 環境を作る。手順は上から順に進め、**各節の確認コマンドが通ってから次へ進む。**
 
+このファイルがセットアップ手順の正本。エージェント（Claude Code / Codex / Gemini CLI など）でも、
+人が手で読んで進める場合でも、ここに書かれた内容がすべて。設定値の意味は `docs/operations.md` §4、
+設計は `docs/SPEC.md`。
+
 ## 大原則
 
-1. **API キーの値を会話に出させない。** キーが必要なときは、ユーザー自身に
-   `! printf 'FAL_KEY=xxx\n' >> .env` の形で書いてもらう（Claude Code の `!` はシェル実行。
-   入力はモデルに渡らない）。書けたかどうかは `cut -d= -f1 .env` でキー名だけ見て確認する。
-   **`cat .env` はしない。**
+1. **API キーの値を会話に出させない。** キーが必要なときは、**ユーザー自身がターミナルで**
+   `printf 'FAL_KEY=xxx\n' >> .env` を実行して書く。エージェントがユーザーからキーを聞き出したり、
+   キーを含むコマンドを代わりに実行したりしない（会話ログや履歴に残るため）。
+   書けたかどうかは `cut -d= -f1 .env` でキー名だけ見て確認する。**`cat .env` はしない。**
 2. **Director に接続する操作はしない。** `h3 speak`、compositor の起動
    （`broadcast.enabled: true` / `h3 broadcast start`）は fal の課金が発生する。
    セットアップの動作確認は `--no-tts` + `broadcast.enabled: false` の範囲で行う。
@@ -24,6 +28,16 @@ description: h3-stream（AIキャラクターの YouTube Live 配信システム
 ---
 
 ## 1. 前提チェック
+
+| 必要なもの | 確認 | 備考 |
+|---|---|---|
+| Node 24 / npm | `node -v` | ESM。24 未満は未検証 |
+| ffmpeg | `ffmpeg -version` | 送出に使う。NVENC が使えると GPU エンコードになる |
+| OpenAI 互換の音声合成サーバー | `curl <base_url>/v1/models` | 別プロセスで用意する（§6） |
+| fal.ai の API キー | | Director の課金あり（§4） |
+| YouTube Data API v3 のキー | | コメント取得・視聴者数 |
+| YouTube のストリームキー | | RTMP 送出 |
+| Python + uv / NVIDIA GPU | `uv --version` / `nvidia-smi` | TTS を**ローカルで自前ホストする場合だけ** |
 
 ```bash
 node -v          # v24 以上
@@ -55,9 +69,9 @@ Playwright の Chromium は次の節で入れる。
 
 ```bash
 npm install
-npx playwright install chromium
-npm run build:web
-npm link
+npx playwright install chromium   # 送出に使う headless Chromium
+npm run build:web                 # web/*.ts → overlay/*.js
+npm link                          # h3 コマンドを PATH に入れる（任意）
 h3 --help
 ```
 
@@ -86,19 +100,25 @@ cut -d= -f1 .env
 | `RTMP_KEY` | YouTube Studio → ライブ配信 → ストリームキー |
 | `TTS_API_KEY` | TTS サーバーが Bearer 認証を要求するときだけ（§6） |
 
-`.env` は秘密だけでなく、**リポジトリ外を指すパス**の置き場でもある
-（yaml の `${VAR}` が展開される）。設定 yaml にマシン固有の絶対パスを書かせない。
+`RTMP_URL` は既定で `rtmp://a.rtmp.youtube.com/live2`。
+OAuth 方式を使うときだけ `YOUTUBE_CLIENT_SECRET` / `YOUTUBE_TOKEN` を使う（`docs/youtube-setup.md`）。
+
+`.env` は秘密だけでなく、**リポジトリ外を指すパス**の置き場でもある。
+設定 yaml に書いた `${VAR}` は環境変数（`.env` 込み）に展開されるので、
+**マシン固有の絶対パス（TTS の LoRA など）は yaml に直書きせず `.env` に置く。**
 
 ユーザーへの案内（そのまま出してよい）：
 
 ```
-以下をコピーして、xxx の部分を実際のキーに置き換えて実行してください。
-キーの値は私（Claude）には渡りません。
+以下の行を、xxx を実際のキーに置き換えて、ご自身でターミナルから実行してください。
+キーの値をこの会話に貼らないでください。
 
-! printf 'FAL_KEY=xxx\n' >> .env
-! printf 'YOUTUBE_API_KEY=xxx\n' >> .env
-! printf 'RTMP_KEY=xxx\n' >> .env
+printf 'FAL_KEY=xxx\n' >> .env
+printf 'YOUTUBE_API_KEY=xxx\n' >> .env
+printf 'RTMP_KEY=xxx\n' >> .env
 ```
+
+（Claude Code なら、行頭に `!` を付けてそのまま送るとシェルで実行され、入力はモデルに渡らない。）
 
 `.env.example` をコピーした直後は `FAL_KEY=` のような空行があるので、
 **追記した行が後に来て上書きされる**ことを確認する。心配なら空行を消してから追記してもらう。
@@ -120,12 +140,14 @@ awk -F= 'length($2)>0 {print $1" set"}' .env   # 値が入っているキーだ�
 
 - Director は **$0.02/秒**（プロモ価格、通常 $0.08）、**最低 $1.20/セッション**。1080p は 2 倍。
 - **セッションの長さは残高で決まる。** `session_info.max_session_seconds` は固定値ではなく
-  「使った秒数だけ減る残枠」で、残高が少ないとセッションが数分で切れる。
+  「使った秒数だけ減る残枠」で、残高が少ないとセッションが数分で切れる（`docs/SPEC.md` §0.4）。
   実測で 372 秒 → 次のセッションでは 243 秒に減っていた。
 - 10 分配信したいなら最低でも $12 相当の枠が要る。
 
 https://fal.ai/dashboard/billing で残高を確認してもらう。
 残高が少ないときは「配信中に `session_ended` で止まる」ことを伝えておく。
+
+TTS は使うサーバー次第（自前ホストなら無料、商用 API なら従量）。YouTube Data API v3 は無料枠内。
 
 ---
 
@@ -158,6 +180,8 @@ YouTube Studio → **作成 → ライブ配信を開始**で配信枠を作っ�
 **URL を丸ごと貼ってよい**（`watch?v=` / `live/` / `youtu.be/` から動画 ID を自動で取り出す）。
 
 ```yaml
+enabled: true
+auth: api_key
 broadcast_id: "https://www.youtube.com/live/AbCdEfG1234"
 ```
 
@@ -179,50 +203,93 @@ curl -s "https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&
 - `API key expired` / `keyInvalid` → キーを作り直す。
 - `accessNotConfigured` → YouTube Data API v3 が有効になっていない。
 
-**キーが URL に出るので、この curl はエージェントが直接実行せずユーザーに `!` で実行してもらうか、
-`source .env` した上で変数のまま渡す**（上のコマンドは変数のままなので、そのまま実行してよい）。
+**キーの値を URL に直接書かない。**上のコマンドは `source .env` した環境変数のままなので、
+そのまま実行してよい（キーが履歴やログに残らない）。
 
 ---
 
 ## 6. TTS サーバー（OpenAI 互換）
 
 音声合成は**このリポジトリの外**のサーバーを叩く。デーモンは
-`POST {base_url}/v1/audio/speech`（JSON → wav）を使うだけで、**サーバーの起動も停止もしない。**
-手順の詳細は `docs/setup.md` §4。
+`POST {base_url}/v1/audio/speech` に
+`{model, voice, input, instructions, response_format: "wav", speed}` を送り、返ってきた wav を使う。
+**サーバーの起動も停止もしない（先に立てておく）。**
+
+接続先は `config/stream.yaml: tts.base_url`（既定 `http://127.0.0.1:8020`）。
+キャラごとに変えるなら `characters/<name>/voice/tts.yaml: base_url` が優先される。
+鍵が要るサーバーなら `.env` の `TTS_API_KEY`。
 
 ### 6-1. どのサーバーを使うか聞く
 
-1. 既に OpenAI 互換の TTS サーバーがある → その URL（と鍵）を `config/stream.yaml: tts.base_url`
-   と `.env: TTS_API_KEY` に設定するだけ。
+1. 既に OpenAI 互換の TTS サーバーがある（OpenAI 本家でもよい）→ その URL（と鍵）を
+   `config/stream.yaml: tts.base_url` と `.env: TTS_API_KEY` に設定するだけ。6-4 へ。
 2. ローカルで日本語の声を作りたい → **Irodori-TTS-Server** を立てる（6-2）。
 
 ### 6-2. Irodori-TTS-Server を立てる（希望する場合）
 
-**このリポジトリの外**に置く。置き場所はユーザーに決めてもらう。
+<https://github.com/Aratako/Irodori-TTS-Server>（**このリポジトリの外**に置く。
+置き場所はユーザーに決めてもらう）。
 
 ```bash
 git clone https://github.com/Aratako/Irodori-TTS-Server.git <path-to-tts-server>
 cd <path-to-tts-server>
-uv sync --extra cu128     # AMD は --extra rocm、CPU のみは --extra cpu
+uv sync --extra cu128     # NVIDIA CUDA 12.8。AMD は --extra rocm、CPU のみは --extra cpu
 cp .env.example .env
 ```
 
-常駐起動（`run_in_background` か別ターミナル。ポートは `tts.base_url` と合わせる）：
+常駐起動（バックグラウンド実行か別ターミナル。ポートは `tts.base_url` と合わせる）：
 
 ```bash
 uv run --no-sync python -m irodori_openai_tts --host 127.0.0.1 --port 8020
 ```
 
 ```bash
-curl -s localhost:8020/health
-curl -s localhost:8020/v1/models
+curl -s localhost:8020/health     # モデルを読まずに設定だけ返す
+curl -s localhost:8020/v1/models  # → {"data":[{"id":"irodori-tts",...}]}
 ```
 
-- `/health` はモデルを読まずに返る。**最初の合成リクエストでモデルを読む**ので、
-  1 発目だけ数十秒〜数分（HuggingFace のダウンロード込み）かかることを伝える。
-- 実測：2 発目以降は 5.3 秒の音声で 1.8 秒。
+`IRODORI_PRELOAD=false`（既定）だと**最初の合成リクエストでモデルを読む**ので、
+1 発目だけ数十秒〜数分かかる（HuggingFace からのダウンロードを含む）ことを伝える。
+2 発目以降は実測で 5.3 秒の音声に 1.8 秒。VRAM は 600M モデルで 5GB 程度を見ておく。
 
-### 6-3. 疎通（課金なし）
+### 6-3. `voice` と `model` に何を書くか
+
+| `voice/tts.yaml` | 書く値 |
+|---|---|
+| `model` | `irodori-tts`（`IRODORI_MODEL_NAME` の既定。`GET {base_url}/v1/models` で確認する） |
+| `voice` | サーバーの `voices/` に置いた参照音声のファイル名（拡張子なし）。`voices/mychar.wav` なら `mychar`。参照音声を使わず instructions だけで作るなら `none` |
+| `speed` | 0.25〜4.0 |
+
+キャラの `voice/reference.wav`（10〜20 秒、単一話者、無音・BGM なし）を
+**サーバーの `voices/<voice-id>.wav` にコピーする**（サーバーはこのリポジトリを読まない）。
+
+**instructions（話し方）と LoRA：** Irodori-TTS-Server は OpenAI の `instructions` フィールドを
+見ない。話し方の指示は **`irodori.caption`** で受けるので、`voice/tts.yaml` にこう書く。
+
+```yaml
+instructions_field: irodori.caption
+```
+
+キャラ専用に学習した LoRA アダプタがあるなら `extra_body` で渡す
+（パスは**サーバー側から見えるパス**。環境変数にして yaml には直書きしない）。
+
+```yaml
+extra_body:
+  irodori:
+    lora_adapter: ${MY_CHARACTER_LORA}   # .env に絶対パスを書く
+    cfg_scale_caption: 3.0
+```
+
+`${VAR}` が未設定なら空になり、その項目は送られない（= 指定なし）。
+LoRA は**ベースのチェックポイントと対で学習されている**ので、LoRA を使うなら
+サーバー側も対応するチェックポイントで起動する（`IRODORI_CHECKPOINT=<path-to-model.safetensors>`）。
+サーバー側の環境変数（`IRODORI_*`）は Irodori-TTS-Server の `.env.example` を参照。
+
+**要確認：** ここに書いた `voices/` の扱い・`irodori.caption`・`lora_adapter` は
+Irodori-TTS-Server の README と実機（v3 600M + LoRA, 48kHz wav）で確認した範囲。
+それ以外のチェックポイントやオプションの挙動は未検証。
+
+### 6-4. 疎通（課金なし）
 
 ```bash
 curl -s localhost:8020/v1/audio/speech -H 'Content-Type: application/json' -d '{
@@ -232,8 +299,11 @@ curl -s localhost:8020/v1/audio/speech -H 'Content-Type: application/json' -d '{
 ffprobe -hide_banner /tmp/tts-test.wav
 ```
 
-wav が返れば OK。**Irodori-TTS-Server は OpenAI の `instructions` を見ない**ので、
-キャラの `voice/tts.yaml` には `instructions_field: irodori.caption` を書く（§7）。
+wav が返れば OK。
+
+**サンプリングレートについて：** デーモンは返ってきた wav のヘッダをそのまま読むので
+48kHz 固定ではない。ただし**配信経路まで検証済みなのは 48kHz wav のみ**。
+他のレートを返すサーバーを使うときは compositor での再生まで確認すること。
 
 ---
 
@@ -261,18 +331,20 @@ cp -r characters/_example characters/<name>
   - `frame_rules`：**`image.png` に映る要素を具体名で列挙**し、それらが常にフレーム内に残ること、
     初期構図より寄らないこと、他の人物を出さないこと、画面に文字・字幕・UI・ロゴを出さないことを明記する。
     `_default` の汎用文は雛形なので**必ずキャラごとに具体化して上書きする**。
-  - `default_scene`：初期の場面を**否定も含めて具体的に**書く（出したくないものも明記する）。
+  - `default_scene`：初期の場面を**否定も含めて具体的に**書く
+    （例：ラボの棚やフラスコは出さない、など出したくないものも明記する）。
   - `style`：画風と照明。
 - `voice/reference.wav`（10〜20 秒、単一話者、無音・BGM なし）をユーザーに用意してもらう。
-  **TTS サーバーの `voices/<voice-id>.wav` にもコピーし**、`voice/tts.yaml: voice` にその ID を書く。
-- `voice/tts.yaml`：`model`（`GET /v1/models` の ID）/ `voice` / `instructions_default` /
+  §6-3 のとおり **TTS サーバーの `voices/<voice-id>.wav` にもコピーし**、
+  `voice/tts.yaml: voice` にその ID を書く。
+- `voice/tts.yaml`：`model` / `voice` / `speed` / `instructions_default` /
   `emotion_instructions`。Irodori-TTS-Server なら `instructions_field: irodori.caption` も。
   LoRA など**リポジトリ外のパスは `.env` に置いて `${VAR}` で参照する。**
 - `character.md`（日本語・人格と口調ルール）、`topics.md`（話題 30 個以上）。
 
 ---
 
-## 8. 動作確認（課金なし）
+## 8. 動作確認（Director に接続しないので課金なし）
 
 `config/stream.yaml` の `broadcast.enabled` が `false` であることを確認してから行う。
 
@@ -293,6 +365,9 @@ h3 daemon stop
 - TTS まで確かめるなら `--no-tts` を外して起動し、`h3 status` の `tts` を見る
   （`ready` / `unreachable`。`unreachable` でもデーモンは起動する。それでも Director には繋がらない）。
 
+**`h3 speak` と compositor の起動（`broadcast.enabled: true` / `h3 broadcast start`）は
+Director に接続して課金されるので、セットアップ段階では実行しない。**
+
 最後に typecheck とテストも通しておく。
 
 ```bash
@@ -312,8 +387,9 @@ npm run typecheck && npm test
 
 そして次を案内する。
 
-> 配信を始めるには `h3-stream-operator` skill を使います。
-> Claude Code に「<キャラ名> で配信開始して」と言ってください。
+> 配信を始めるときは、エージェントに「<キャラ名> で配信開始して」と言ってください。
+> 手順書は `.claude/skills/h3-stream-operator/SKILL.md` です
+> （Claude Code なら `h3-stream-operator` skill として自動で認識されます）。
 
 **セットアップの一部として配信を始めない。** 送出（`broadcast.enabled: true`）を有効にするのも、
 配信開始のタイミングでオペレーター側が行う。

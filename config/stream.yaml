@@ -29,7 +29,7 @@ ports:
   host: 127.0.0.1
 
 # OpenAI 互換の音声合成 API（POST {base_url}/v1/audio/speech）。
-# サーバーはこのリポジトリの管理外。別途立てておく（docs/setup.md §4）。
+# サーバーはこのリポジトリの管理外。別途立てておく（.claude/skills/h3-stream-setup/SKILL.md §6）。
 # 鍵が要るサーバーなら .env の TTS_API_KEY に書く。
 # キャラごとに別のサーバーを使うなら characters/<name>/voice/tts.yaml の base_url が優先される。
 tts:

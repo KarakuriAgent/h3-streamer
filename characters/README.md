@@ -16,7 +16,7 @@ characters/
     tts.yaml           # TTS の既定値（model / emotion → instructions 変換表など）
   _example/            # 雛形。cp -r して新しいキャラを作る（git 管理内）
   <name>/              # 実際のキャラ（git 管理外）
-    character.md       # 人格設定書（エージェント向け・日本語）。発話文はこれに従って書く
+    character.md       # 人格設定書（配信オペレーター向け・日本語）。発話文はこれに従って書く
     topics.md          # コメントが無いときの話題ヒント（30 個以上）
     visual.yaml        # identity / frame_rules / style / default_scene（Director 向け・英語）
     image.png          # 最初のフレーム。16:9 推奨、キャラ全身が余裕を持って収まる構図
@@ -63,12 +63,13 @@ characters/
      （Irodori-TTS-Server は `irodori.caption`）。LoRA などサーバー固有の指定は `extra_body`。
    - **リポジトリの外を指すパスは yaml に直書きせず、`.env` に置いて `${VAR}` で参照する。**
      未設定の `${VAR}` は空になり、その項目は送られない。
-   - サーバーの立て方は `docs/setup.md` §4。
+   - サーバーの立て方は `.claude/skills/h3-stream-setup/SKILL.md` §6。
 
 5. **`character.md` を書く（日本語）**
    プロフィール、世界観、性格、**口調ルール**（一人称・語尾・口癖・1 発話 25〜40 文字）、
-   **コメント主の呼び方**、**NG 事項**、セリフ例。エージェントはこれを読んで発話文を書くので、
-   「こう書け」という具体的な指示の形で書く。抽象的な性格描写だけでは足りない。
+   **コメント主の呼び方**、**NG 事項**、セリフ例。配信オペレーター（エージェントでも人でも）は
+   これを読んで発話文を書くので、「こう書け」という具体的な指示の形で書く。
+   抽象的な性格描写だけでは足りない。
 
 6. **`topics.md` を書く（日本語）**
    コメントが無いときの話題を 30 個以上。設定由来のものと雑談を混ぜる。
@@ -83,7 +84,7 @@ characters/
    h3 daemon start --character <name>
    h3 status
    h3 speak --text "テスト発話だよ" --direction "She waves at the camera with a small smile." --emotion happy
-   h3 frame --out /tmp/f.png     # 見た目が image.png と一致しているか目視で確認
+   h3 frame --out /tmp/f.png     # 保存した画像を開き、見た目が image.png と一致しているか確認
    ```
 
 ## チェックリスト

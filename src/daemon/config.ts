@@ -14,7 +14,7 @@ export interface StreamPorts {
 
 /**
  * OpenAI 互換の音声合成 API（`POST {base_url}/v1/audio/speech`）の接続設定。
- * サーバーはこのリポジトリの管理外で、デーモンは起動も停止もしない（docs/setup.md §4）。
+ * サーバーはこのリポジトリの管理外で、デーモンは起動も停止もしない（.claude/skills/h3-stream-setup/SKILL.md §6）。
  */
 export interface TtsConfig {
   /** キャラの voice/tts.yaml に base_url があればそちらが優先される。 */

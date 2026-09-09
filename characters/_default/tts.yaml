@@ -3,7 +3,7 @@
 # 送り先は OpenAI 互換の音声合成 API（POST {base_url}/v1/audio/speech）。
 # デーモンは JSON で {model, voice, input, instructions, response_format: "wav", speed} を送り、
 # 返ってきた wav をそのまま使う（サンプリングレートはヘッダから読むので 48kHz 固定ではない）。
-# サーバーの立て方は docs/setup.md §4。
+# サーバーの立て方は .claude/skills/h3-stream-setup/SKILL.md §6。
 
 # 接続先。空なら config/stream.yaml の tts.base_url を使う。
 base_url: http://127.0.0.1:8020

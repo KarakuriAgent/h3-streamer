@@ -10,18 +10,20 @@ MiniMax H3 Max Director（fal.ai）で AI キャラクターの YouTube Live 配
   ローカルで日本語の声を作るなら [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server)
   （その場合は Python + uv と NVIDIA GPU も要る）
 
-## セットアップ
+## 使い方
 
-Claude Code で `/h3-stream-setup` を実行する（対話的に環境構築まで進む）。
-手で進めるなら [`docs/setup.md`](./docs/setup.md)。
+お使いのコーディングエージェント（Claude Code、Codex、Gemini CLI、Cursor など）に
+[`AGENTS.md`](./AGENTS.md) を読ませたうえで、「セットアップして」「<キャラ名> で配信開始して」と指示する
+（Claude Code なら `/h3-stream-setup` と `h3-stream-operator` skill として自動で認識される）。
 
-## 配信
+手順書の正本は `.claude/skills/h3-stream-{setup,operator}/SKILL.md` の 2 ファイル。
+AGENTS.md と [`docs/agents/README.md`](./docs/agents/README.md) がそこへ案内する。
+素の Markdown なので、エージェントを使わず人が読んで進めることもできる。
 
-Claude Code で「<キャラ名> で配信開始して」と言う（`h3-stream-operator` skill が動く）。
-キャラクターは `characters/_example/` をコピーして作る（`characters/README.md`）。
+キャラクターは `characters/_example/` をコピーして作る（[`characters/README.md`](./characters/README.md)）。
 `characters/<name>/` は git 管理外なので、設定・画像・声は各自の手元に置く。
 
 ## ドキュメント
 
-設計は [`docs/SPEC.md`](./docs/SPEC.md)、コマンドと設定は [`docs/operations.md`](./docs/operations.md)、
-索引は [`docs/README.md`](./docs/README.md)。
+設計は [`docs/SPEC.md`](./docs/SPEC.md)、コマンド・設定・エラーの参照資料は
+[`docs/operations.md`](./docs/operations.md)、索引は [`docs/README.md`](./docs/README.md)。

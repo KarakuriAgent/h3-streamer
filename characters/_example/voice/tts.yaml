@@ -1,6 +1,6 @@
 # <キャラ名> の TTS 設定（雛形）。characters/_default/tts.yaml を上書きする。
 # 送り先は OpenAI 互換の音声合成 API（POST {base_url}/v1/audio/speech）。
-# サーバーの立て方は docs/setup.md §4。
+# サーバーの立て方は .claude/skills/h3-stream-setup/SKILL.md §6。
 
 # 接続先。省略すると config/stream.yaml の tts.base_url。
 base_url: http://127.0.0.1:8020

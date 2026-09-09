@@ -124,7 +124,7 @@ function setByPath(target: Record<string, unknown>, path: string, value: unknown
  * - 疎通 : `GET {base_url}/v1/models`、無ければ `GET {base_url}/health`
  *
  * サーバーはこのリポジトリの管理外（別プロセス・別ホスト）で、デーモンは起動も停止もしない。
- * 具体的なサーバーの立て方は `docs/setup.md` §4。
+ * 具体的なサーバーの立て方は `.claude/skills/h3-stream-setup/SKILL.md` §4。
  */
 export class TtsClient {
   private readonly config: TtsConfig;
@@ -227,7 +227,7 @@ export class TtsClient {
     } catch (error) {
       throw new TtsError(
         "tts_unavailable",
-        `TTS server ${this.baseUrl} に接続できない (${String(error)})。OpenAI 互換の音声合成サーバーを起動するか、tts.base_url を直す（docs/setup.md §4）。`,
+        `TTS server ${this.baseUrl} に接続できない (${String(error)})。OpenAI 互換の音声合成サーバーを起動するか、tts.base_url を直す（.claude/skills/h3-stream-setup/SKILL.md §6）。`,
       );
     }
     if (!response.ok) {

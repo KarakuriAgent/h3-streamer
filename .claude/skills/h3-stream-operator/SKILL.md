@@ -11,6 +11,9 @@ description: AIキャラクターの YouTube Live 配信を h3 CLI で運営す�
 デーモンが Director セッション・TTS・RTMP 送出・コメント取得を持っている。
 **あなたが止まってもデーモンは流れ続ける。** あなたの仕事は「何を喋り、何を映すか」を決めることだけ。
 
+このファイルが配信運営の正本。どのコーディングエージェント（Claude Code / Codex / Gemini CLI など）でも、
+人が手で読んで進める場合でも、ここに書かれた手順に従う。
+
 ---
 
 ## 0. 大原則（最初に頭に入れる）
@@ -191,7 +194,7 @@ h3 status
 | 症状 | 対応 |
 |---|---|
 | `event: error`（chunk stalled など） | `h3 log --tail 20` を確認 → `h3 session restart --reason "chunk stalled"` |
-| 見た目が崩れてきた気がする | **自動では何もしない。** `h3 frame --out /tmp/frame.png` で確認して人に報告するだけ。リセットはユーザーから指示があった場合のみ（下記「映像リセット」） |
+| 見た目が崩れてきた気がする | **自動では何もしない。** `h3 frame --out /tmp/frame.png` で保存した画像を開いて確認し（画像を読めるエージェントならそのまま読む。読めないなら人に開いてもらう）、人に報告するだけ。リセットはユーザーから指示があった場合のみ（下記「映像リセット」） |
 | TTS が失敗する | `h3 log` を確認。数回リトライして駄目なら人に報告 |
 | コメントが取れなくなった | `h3 status` の `youtube.chat_state` を見る。`waiting` ならチャットがまだ開いていないだけで待てば復帰する。`stopped` なら `reason`（`liveChatEnded` など）を読んで人に報告 |
 | `h3 speak` が `session_ended` を返す | セッションが死んでいる。下記「セッションが終了した」 |
@@ -299,7 +302,7 @@ h3 daemon stop
 | `h3 overlay --highlight ID / --subtitle "..." / --comments on\|off` | オーバーレイ操作 |
 | `h3 session restart --reason "..."` | セッション張り直し（上限・エラー時） |
 | `h3 reset --reason "..."` | 映像リセット。**ユーザーから指示があった場合のみ** |
-| `h3 frame --out path.png` | 現在フレームを保存（Read して目視確認） |
+| `h3 frame --out path.png` | 現在フレームを PNG で保存。開いて目視確認する（画像を読めるエージェントならそのまま読む） |
 | `h3 broadcast status` | 送出の状態（mode / running / ffmpeg_running / chunks_in / last_error） |
 | `h3 broadcast start` / `h3 broadcast stop` | 送出だけ開始・停止する（デーモンは動かしたまま） |
 | `h3 audio test --wav path [--delay-ms N]` | 任意の wav を配信音声に流す（経路の確認用。**配信中は使わない**） |

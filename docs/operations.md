@@ -1,7 +1,9 @@
 # 運用リファレンス（コマンド・設定・エラー）
 
 `h3` コマンド、設定ファイル、エラーの意味、トラブルシュートをまとめる。
-配信中の判断手順は `.claude/skills/h3-stream-operator/SKILL.md`、設計は `docs/SPEC.md`。
+ここは参照資料。**手順書ではない。**セットアップの手順は
+`.claude/skills/h3-stream-setup/SKILL.md`、配信中の判断手順は
+`.claude/skills/h3-stream-operator/SKILL.md`、設計は `docs/SPEC.md`。
 
 ---
 

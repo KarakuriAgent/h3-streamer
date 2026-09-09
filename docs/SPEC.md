@@ -2,7 +2,7 @@
 
 MiniMax H3 Max Director（fal.ai）で AI キャラクターの YouTube Live 配信を行うシステムの設計書。
 **現在の実装を正とする。** コマンドの使い方・設定値・エラー対応は `docs/operations.md`、
-環境構築は `docs/setup.md` にある（このファイルでは重複させない）。
+環境構築の手順は `.claude/skills/h3-stream-setup/SKILL.md` にある（このファイルでは重複させない）。
 
 ## 基本方針
 
@@ -10,11 +10,12 @@ MiniMax H3 Max Director（fal.ai）で AI キャラクターの YouTube Live 配
   `--character` で切り替える。コード側にキャラ名や外見をハードコードしない。
 - **AI 動画生成であることを活かす。** 普通の配信の再現ではなく、コメントに応じて背景・小道具・
   演出・仕草を自由に変える。守るのは「キャラの同一性」と「キャラが画面内に映り続けること」だけ。
-- 配信の進行・コメント応答・状態監視は、**CLI エージェントのセッション**（Claude Code / Codex）が行う。
-- アプリ側は「配信を維持するデーモン」「エージェントが叩く CLI」「使い方を教える skill」を提供する。
+- 配信の進行・コメント応答・状態監視は、**コーディングエージェントのセッション**（Claude Code /
+  Codex / Gemini CLI など。人が手で回すこともできる）が行う。
+- アプリ側は「配信を維持するデーモン」「エージェントが叩く CLI」「使い方を教える手順書」を提供する。
 - **エージェントが止まってもデーモンは流れ続ける。**
 - 実装言語：TypeScript（ESM, Node 24）。TTS は**外部の OpenAI 互換 音声合成 API**を叩く
-  （サーバーはこのリポジトリの管理外。`docs/setup.md` §4）。
+  （サーバーはこのリポジトリの管理外。`.claude/skills/h3-stream-setup/SKILL.md` §6）。
 
 ---
 
@@ -120,7 +121,7 @@ MiniMax H3 Max Director（fal.ai）で AI キャラクターの YouTube Live 配
 ## 1. 全体構成
 
 ```
- [Claude Code / Codex セッション]  ←― skill: h3-stream-operator（運用手順）
+ [コーディングエージェントのセッション] ←― 手順書: h3-stream-operator/SKILL.md（運用手順）
           │  bash で CLI を実行      ←― characters/<name>/（キャラ設定・画像・声）
           ▼
  h3 CLI ──HTTP(127.0.0.1:8777)──▶ h3 daemon（常駐）
@@ -158,7 +159,7 @@ Director セッションを持っていく。送出中に目視するときは `
 ```
 h3-stream/
   README.md
-  docs/               SPEC.md（この文書）/ setup.md / operations.md / youtube-setup.md / README.md（索引）
+  docs/               SPEC.md（この文書）/ operations.md / youtube-setup.md / agents/README.md / README.md（索引）
   bin/h3.js           CLI エントリ（npm link で PATH に入る）
   src/
     daemon/           index.ts / director.ts / tts.ts / chat.ts / overlay.ts / broadcaster.ts
@@ -225,9 +226,12 @@ h3-stream/
 
 ---
 
-## 4. エージェント（skill）の位置づけ
+## 4. 手順書（skill）の位置づけ
 
-| skill | 役割 |
+手順書は素の Markdown で、どのコーディングエージェントでも人でも読んで従える
+（Claude Code なら skill として自動で認識される）。
+
+| 手順書 | 役割 |
 |---|---|
 | `.claude/skills/h3-stream-setup/SKILL.md` | 環境構築を対話的に完了させる。Director には接続しない（課金しない） |
 | `.claude/skills/h3-stream-operator/SKILL.md` | 配信の運営。発話・演出・コメント返答・セッション再接続・終了 |
@@ -354,7 +358,7 @@ h3 speak
 ## 6. TTS（OpenAI 互換 音声合成 API）
 
 - `src/daemon/tts.ts` は**汎用クライアント**。サーバーはこのリポジトリの管理外で、
-  デーモンは起動も停止もしない（立て方は `docs/setup.md` §4）。
+  デーモンは起動も停止もしない（立て方は `.claude/skills/h3-stream-setup/SKILL.md` §6）。
 - 合成：`POST {base_url}/v1/audio/speech`
   （JSON `{model, voice, input, instructions?, response_format:"wav", speed?}` → `audio/wav`）。
 - 疎通：起動時に `GET {base_url}/v1/models`（無ければ `GET {base_url}/health`）。
