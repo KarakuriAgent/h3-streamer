@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
-import type { AudioSource } from "../shared/protocol.ts";
+import type { AudioSource, AudioSync } from "../shared/protocol.ts";
 
 /** リポジトリルート（このファイルは src/daemon にある）。 */
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -101,6 +101,26 @@ export interface StreamConfig {
    * `on_air_at + audio_offset_ms` に wav を鳴らす。正で遅らせる。
    */
   audio_offset_ms: number;
+  /**
+   * `tts_direct` の再生開始をどう決めるか（SPEC §5.1）。既定 `director_onset`。
+   *
+   * - `director_onset` … Director の音声トラックの立ち上がり（口パクの開始）を
+   *   compositor が検知した瞬間に鳴らす。推定 `on_air_at` は順番とフォールバックの
+   *   締切にだけ使う。実測で推定は −0.1〜+9.8 秒ばらつく（プロンプトが次チャンク境界で
+   *   適用されるため原理的に推定できない）ので、こちらが既定。
+   * - `scheduled` … 推定 `on_air_at` の時刻に鳴らす（v0.3 までの挙動）。
+   */
+  audio_sync: AudioSync;
+  /** オンセットとみなす Director 音声の RMS（dBFS）。既定 -40。 */
+  onset_threshold_db: number;
+  /** この秒数だけオンセットを待っても来なければ、諦めて鳴らす。既定 12。 */
+  onset_fallback_sec: number;
+  /**
+   * 直接再生する TTS の入力ゲイン（dB）。既定 -6。
+   * TTS の wav はピーク 0 dBFS でクリップ済みのサンプルを含むため、
+   * 一度下げてからリミッター（DynamicsCompressor）に通す。
+   */
+  tts_gain_db: number;
   /** デーモン起動より前に投稿されたコメントを捨てる（初回ポーリングの過去分対策）。 */
   ignore_comments_before_start: boolean;
   endpoint: string;
@@ -123,6 +143,10 @@ const DEFAULT_CONFIG: StreamConfig = {
   voice_mode: "tts",
   audio_source: "tts_direct",
   audio_offset_ms: 0,
+  audio_sync: "director_onset",
+  onset_threshold_db: -40,
+  onset_fallback_sec: 12,
+  tts_gain_db: -6,
   ignore_comments_before_start: true,
   endpoint: "minimax/h3-max/director",
   ports: { api: 8777, host: "127.0.0.1" },

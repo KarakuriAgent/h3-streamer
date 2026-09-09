@@ -32,7 +32,7 @@ import {
   TtsScheduleLog,
   type TtsScheduleEntry,
 } from "./audio.ts";
-import type { DirectorServerMessage } from "../shared/protocol.ts";
+import type { DirectorServerMessage, FromViewerMessage, PlayTrigger } from "../shared/protocol.ts";
 
 /** voice_mode: native のときの発話長の見積もり（日本語 ≒ 7 文字/秒）。 */
 const NATIVE_CHARS_PER_SEC = 7;
@@ -73,10 +73,28 @@ interface ScheduledPlay {
   /** Director に渡した音声 URL（fal storage）。ローカル検証では null。 */
   audioUrl: string | null;
   promptVersion: number | null;
+  /** 音は鳴らさず字幕・強調の切替だけに使う（`audio_source: director`）。 */
+  silent: boolean;
+  /** 鳴り始めた瞬間に出す字幕。`audio_sync: scheduled` では使わない（null）。 */
+  subtitle: string | null;
+  /** 同時に強調するコメント id。 */
+  highlightCommentId: string | null;
 }
 
 /** `audio_applied` を受けて再生時刻を撃ち直す最小のずれ（ms）。 */
 const REPLAY_THRESHOLD_MS = 150;
+
+/** 発話が終わってから字幕を消すまでの余韻（ms）。 */
+const SUBTITLE_TAIL_MS = 500;
+
+/** compositor が実際に鳴らし始めた実測（`audio_started`）。`h3 status` の `audio` に出す。 */
+interface StartedPlayRecord {
+  id: string;
+  trigger: PlayTrigger;
+  /** 推定（`at_ms`）との差。正なら推定より遅く鳴った。 */
+  offsetMs: number;
+  startedAtMs: number;
+}
 
 export class Daemon {
   readonly config: StreamConfig;
@@ -96,6 +114,8 @@ export class Daemon {
   private readonly ttsScheduleLog: TtsScheduleLog | null;
   /** まだ鳴っていない（あるいは鳴り始めたばかりの）直接再生の予約。 */
   private readonly scheduledPlays = new Map<string, ScheduledPlay>();
+  /** 直近に鳴り始めた発話の実測（`audio_started`）。 */
+  private lastStartedPlay: StartedPlayRecord | null = null;
 
   private server: Server | null = null;
   private tickTimer: NodeJS.Timeout | null = null;
@@ -125,6 +145,7 @@ export class Daemon {
     this.director = new DirectorController(config, character, this.state);
     // Director が音声をキューに載せた実測が届いたら、直接再生の時刻を撃ち直す。
     this.director.onAudioApplied = (message) => this.onDirectorAudioApplied(message);
+    this.director.onAudioStarted = (message) => this.onCompositorAudioStarted(message);
     this.tts = new TtsClient(config.tts, character.voice);
     this.broadcaster = new Broadcaster(
       config,
@@ -456,9 +477,17 @@ export class Daemon {
     this.pruneScheduledPlays();
     return {
       source: this.config.audio_source,
+      sync: this.config.audio_sync,
       offset_ms: this.config.audio_offset_ms,
+      onset_threshold_db: this.config.onset_threshold_db,
+      onset_fallback_sec: this.config.onset_fallback_sec,
+      tts_gain_db: this.config.tts_gain_db,
       pending_plays: this.scheduledPlays.size,
       record_director_audio: this.config.broadcast.record_director_audio,
+      // 直近の発話が「いつ・何をきっかけに」鳴ったか。推定との差はここでしか分からない。
+      last_trigger: this.lastStartedPlay?.trigger ?? null,
+      last_started_offset_ms: this.lastStartedPlay?.offsetMs ?? null,
+      last_started_id: this.lastStartedPlay?.id ?? null,
       ...(this.directorAudioRecorder?.currentPath
         ? {
             director_audio_file: this.directorAudioRecorder.currentPath,
@@ -525,14 +554,24 @@ export class Daemon {
     const sent = this.director.prompt(buildDirectorPrompt(this, input.direction, input.text, audioUrl));
 
     const timing = this.state.enqueueAudio(durationSec);
-    this.overlay.schedule(timing.on_air_at_ms, input.commentId, input.text, durationSec * 1000);
+
+    // `director_onset` では字幕・強調も compositor 主導（実際の発話開始に同期）。
+    // `scheduled` のときだけ従来どおりデーモンが on_air_at のタイマーで切り替える。
+    const onsetDriven = this.config.audio_sync === "director_onset";
+    if (!onsetDriven) {
+      this.overlay.schedule(timing.on_air_at_ms, input.commentId, input.text, durationSec * 1000);
+    }
 
     // tts_direct：同じ wav を compositor に直接鳴らさせる。
+    // director でも、`director_onset` なら字幕用の仮想エントリだけ積む。
+    const directPlay = this.config.audio_source === "tts_direct" && wav;
     const play =
-      this.config.audio_source === "tts_direct" && wav
-        ? this.schedulePlay(wav, durationSec, timing.on_air_at_ms, {
+      directPlay || onsetDriven
+        ? this.schedulePlay(directPlay ? wav : null, durationSec, timing.on_air_at_ms, {
             audioUrl,
             promptVersion: sent?.prompt_version ?? null,
+            subtitle: onsetDriven && this.overlay.subtitlesEnabled ? input.text : null,
+            highlightCommentId: onsetDriven ? input.commentId : null,
           })
         : null;
 
@@ -558,7 +597,8 @@ export class Daemon {
       queue_remaining_sec: timing.queue_remaining_sec,
       ...(input.commentId ? { comment_used: input.commentId } : {}),
       ...(audioUrl ? { audio_url: audioUrl } : {}),
-      ...(play ? { play_id: play.id, play_at_ms: Math.round(play.atMs) } : {}),
+      // 字幕用の仮想エントリ（silent）は鳴らす wav が無いので play_id は返さない。
+      ...(play && !play.silent ? { play_id: play.id, play_at_ms: Math.round(play.atMs) } : {}),
     };
   }
 
@@ -573,19 +613,29 @@ export class Daemon {
    * `h3 status` の `audio.pending` とログで分かる。
    */
   private schedulePlay(
-    wav: Uint8Array,
+    wav: Uint8Array | null,
     durationSec: number,
     onAirAtMs: number,
-    meta: { audioUrl: string | null; promptVersion: number | null },
+    meta: {
+      audioUrl: string | null;
+      promptVersion: number | null;
+      subtitle?: string | null;
+      highlightCommentId?: string | null;
+    },
   ): ScheduledPlay {
-    const entry = this.audioStore.put(wav, durationSec);
+    // wav が無い（`audio_source: director` / TTS が wav を返さない）ときは
+    // 字幕・強調の切替だけを行う仮想エントリにする。
+    const entry = wav ? this.audioStore.put(wav, durationSec) : null;
     const play: ScheduledPlay = {
-      id: entry.id,
-      url: this.audioStore.url(entry.id),
+      id: entry?.id ?? this.audioStore.nextSilentId(),
+      url: entry ? this.audioStore.url(entry.id) : "",
       atMs: onAirAtMs + this.config.audio_offset_ms,
       durationSec,
       audioUrl: meta.audioUrl,
       promptVersion: meta.promptVersion,
+      silent: entry === null,
+      subtitle: meta.subtitle ?? null,
+      highlightCommentId: meta.highlightCommentId ?? null,
     };
     this.scheduledPlays.set(play.id, play);
     this.pruneScheduledPlays();
@@ -612,6 +662,9 @@ export class Daemon {
       url: play.url,
       at_ms: Math.round(play.atMs),
       duration_sec: play.durationSec,
+      ...(play.silent ? { silent: true } : {}),
+      ...(play.subtitle !== null ? { subtitle: play.subtitle } : {}),
+      ...(play.highlightCommentId !== null ? { highlight_comment_id: play.highlightCommentId } : {}),
     });
     this.state.log(
       delivered ? "info" : "warn",
@@ -651,10 +704,57 @@ export class Daemon {
     this.state.log("info", `play_audio ${play.id} を audio_applied に合わせて ${shiftMs}ms 動かした`);
   }
 
-  /** 鳴り終わった予約は覚えておく必要が無い（撃ち直しの対象にもならない）。 */
+  /**
+   * compositor が実際に鳴らし始めた（`audio_started`）。
+   *
+   * `audio_sync: director_onset` では、鳴り始める時刻は Director の口パクが
+   * 決めるのでデーモンには予測できない。実測をここで受け取り、次回の計測のために
+   * `tts-schedule-<run>.jsonl` に追記して `h3 status` の `audio` に出す。
+   */
+  onCompositorAudioStarted(message: Extract<FromViewerMessage, { type: "audio_started" }>): void {
+    const offsetMs = Math.round(message.started_at_ms - message.at_ms);
+    this.lastStartedPlay = {
+      id: message.id,
+      trigger: message.trigger,
+      offsetMs,
+      startedAtMs: message.started_at_ms,
+    };
+    const play = this.scheduledPlays.get(message.id);
+    // 実際の発話開始に合わせて字幕と強調を切り替える（推定 on_air_at では早く出てしまう）。
+    if (play && (play.subtitle !== null || play.highlightCommentId !== null)) {
+      this.overlay.showNow(
+        play.highlightCommentId,
+        play.subtitle,
+        message.duration_sec * 1000 + SUBTITLE_TAIL_MS,
+      );
+    }
+    this.ttsScheduleLog?.append({
+      id: message.id,
+      url: play?.url ?? "",
+      at_ms: message.at_ms,
+      duration_sec: message.duration_sec,
+      prompt_version: play?.promptVersion ?? null,
+      event: "audio_started",
+      started_at_ms: message.started_at_ms,
+      trigger: message.trigger,
+      offset_ms: offsetMs,
+    });
+    // 鳴り始めたので、この予約はもう撃ち直しの対象にしない。
+    this.scheduledPlays.delete(message.id);
+  }
+
+  /**
+   * 鳴り終わった予約は覚えておく必要が無い（撃ち直しの対象にもならない）。
+   *
+   * `director_onset` では鳴り始めるのが推定より遅れることがあるので、
+   * フォールバックの締切（`at_ms + onset_fallback_sec`）を過ぎるまでは残す
+   * （実際に鳴ったものは `audio_started` で消える）。
+   */
   private pruneScheduledPlays(now = Date.now()): void {
+    const graceMs =
+      this.config.audio_sync === "director_onset" ? this.config.onset_fallback_sec * 1000 : 0;
     for (const [id, play] of this.scheduledPlays) {
-      if (play.atMs + play.durationSec * 1000 < now) this.scheduledPlays.delete(id);
+      if (play.atMs + graceMs + play.durationSec * 1000 < now) this.scheduledPlays.delete(id);
     }
   }
 
@@ -677,6 +777,9 @@ export class Daemon {
       durationSec: entry.durationSec,
       audioUrl: null,
       promptVersion: null,
+      silent: false,
+      subtitle: null,
+      highlightCommentId: null,
     };
     this.scheduledPlays.set(play.id, play);
     this.sendPlay(play);
@@ -741,7 +844,10 @@ export class Daemon {
       queue_cleared: true,
       queue_lost_sec: queueLostSec,
       queue_remaining_sec: 0,
-      ...(this.config.audio_source === "tts_direct" ? { audio_cancelled: cancelled } : {}),
+      // director でも `director_onset` なら字幕用の仮想エントリを積んでいる。
+      ...(this.config.audio_source === "tts_direct" || this.config.audio_sync === "director_onset"
+        ? { audio_cancelled: cancelled }
+        : {}),
     };
   }
 

@@ -16,6 +16,8 @@ interface ScheduledSwitch {
 export class OverlayServer {
   private readonly sockets = new Set<WebSocket>();
   private readonly scheduled: ScheduledSwitch[] = [];
+  /** false のとき自動字幕（speak 由来）を出さない。手動の --subtitle は影響しない。 */
+  subtitlesEnabled = true;
   private state: OverlayState = {
     comments: [],
     highlight: null,
@@ -68,6 +70,25 @@ export class OverlayServer {
   setCommentsVisible(visible: boolean): void {
     this.state = { ...this.state, commentsVisible: visible };
     this.broadcast({ type: "visible", comments: visible });
+  }
+
+  /**
+   * **いま**強調と字幕を切り替え、`durationMs` 経過後に字幕を消す。
+   *
+   * `audio_sync: director_onset`（SPEC §5.1）では、切替の時刻を決めるのは
+   * compositor が検知した Director のオンセット（＝実際の発話開始）なので、
+   * デーモンは予約を積まずに `audio_started` を受けた瞬間にこれを呼ぶ。
+   */
+  showNow(commentId: string | null, subtitle: string | null, durationMs: number): void {
+    if (commentId !== null) this.setHighlight(commentId);
+    this.setSubtitle(subtitle);
+    this.push(
+      setTimeout(() => {
+        // 後続の発話が既に字幕を差し替えていたら触らない。
+        if (this.state.subtitle === subtitle) this.setSubtitle(null);
+      }, Math.max(0, durationMs)),
+      Date.now() + durationMs,
+    );
   }
 
   /**

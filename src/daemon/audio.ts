@@ -54,6 +54,15 @@ export class AudioStore {
     return entry;
   }
 
+  /**
+   * wav を持たない仮想エントリ（字幕・強調の切替だけに使う）用の id。
+   * `/audio/<id>.wav` は存在しないので、compositor は fetch しない。
+   */
+  nextSilentId(): string {
+    this.counter += 1;
+    return `s${String(this.counter).padStart(5, "0")}`;
+  }
+
   get(id: string): AudioEntry | undefined {
     return this.entries.get(id);
   }

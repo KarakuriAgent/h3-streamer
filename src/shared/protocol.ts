@@ -179,6 +179,22 @@ export function describeDirectorError(message: DirectorServerMessage): string {
 export type AudioSource = "director" | "tts_direct";
 
 /**
+ * `tts_direct` の再生開始をどう決めるか（SPEC §5.1、`config/stream.yaml: audio_sync`）。
+ *
+ * - `director_onset` … Director 音声トラックの立ち上がり（＝口パクの開始）を compositor が
+ *                      検知した瞬間に鳴らす。`play_audio` は FIFO キューに積むだけで、
+ *                      `at_ms` は順番の目安とフォールバックの締切にしか使わない。
+ * - `scheduled`      … `at_ms` の時刻に鳴らす（v0.3 までの挙動）。
+ *
+ * 推定 `on_air_at` と実際の口パク開始のずれは実測で −0.1〜+9.8 秒。プロンプトは
+ * 次のチャンク境界で適用されるため、デーモン側では原理的に詰められない。
+ */
+export type AudioSync = "director_onset" | "scheduled";
+
+/** `audio_started` の引き金。どうやって再生開始を決めたか。 */
+export type PlayTrigger = "onset" | "fallback" | "scheduled";
+
+/**
  * compositor の音声設定。`hello` に載せてページへ渡す。
  * ページは query param ではなくこれを唯一の情報源にする（人が `/compositor` を
  * そのまま開いてもデーモンの設定と食い違わないようにするため）。
@@ -187,6 +203,14 @@ export interface AudioSetup {
   source: AudioSource;
   /** Director の音声トラックだけを別 MediaRecorder で録って解析用に保存する。 */
   record_director_audio: boolean;
+  /** 再生開始の決め方（既定 `director_onset`）。 */
+  sync: AudioSync;
+  /** オンセットとみなす Director 音声の RMS（dBFS）。 */
+  onset_threshold_db: number;
+  /** オンセットを待つ上限（秒）。過ぎたらフォールバックで即時再生する。 */
+  onset_fallback_sec: number;
+  /** 直接再生する TTS の入力ゲイン（dB）。リミッターの手前に入る。 */
+  tts_gain_db: number;
 }
 
 /**
@@ -205,6 +229,20 @@ export interface PlayAudioMessage {
   url: string;
   at_ms: number;
   duration_sec: number;
+  /**
+   * true = 音は鳴らさず、字幕・強調の切替だけを行う仮想エントリ。
+   * `audio_source: director`（配信音声は Director のまま）でも、字幕を
+   * 実際の発話開始に合わせるためにオンセット検知の FIFO に載せる。
+   */
+  silent?: boolean;
+  /**
+   * この発話の字幕。**鳴り始めた瞬間**に切り替え、`duration_sec` + 0.5 秒で消す
+   * （`audio_sync: director_onset` のとき。`scheduled` ではデーモンのタイマーが
+   * 従来どおり `on_air_at` で切り替えるので、ここには載せない）。
+   */
+  subtitle?: string | null;
+  /** 同時に強調するコメント id。 */
+  highlight_comment_id?: string | null;
 }
 
 /** デーモン → ビューワーページ。 */
@@ -237,6 +275,21 @@ export type FromViewerMessage =
       /** 実際に鳴り始める時刻（`Date.now()` 基準の推定）。 */
       starts_at_ms: number;
       skipped_sec: number;
+      duration_sec: number;
+    }
+  /**
+   * 実際に鳴り始めたことの報告（`audio_scheduled` は「いつ鳴らす予定か」なので別物）。
+   * `director_onset` ではここでしか実測が取れない。デーモンは
+   * `tts-schedule-<run>.jsonl` に追記し、`h3 status` の `audio` に直近値を出す。
+   */
+  | {
+      type: "audio_started";
+      id: string;
+      /** 鳴り始めた時刻（`Date.now()` 基準）。 */
+      started_at_ms: number;
+      trigger: PlayTrigger;
+      /** そのとき指示されていた `at_ms`（推定との差を出すため）。 */
+      at_ms: number;
       duration_sec: number;
     }
   | { type: "audio_error"; id: string; message: string };

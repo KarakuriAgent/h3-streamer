@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -52,7 +52,15 @@ interface DirectorStub {
   imageUrl: string;
   promptVersion: number;
   /** compositor へ送った play_audio。tts_direct のテストで中身を見る。 */
-  plays: { id: string; url: string; at_ms: number; duration_sec: number }[];
+  plays: {
+    id: string;
+    url: string;
+    at_ms: number;
+    duration_sec: number;
+    silent?: boolean;
+    subtitle?: string | null;
+    highlight_comment_id?: string | null;
+  }[];
   /** cancel_audio を送った回数。 */
   cancels: number;
   onAudioApplied: ((message: DirectorServerMessage) => void) | null;
@@ -92,7 +100,7 @@ function makeDaemon(overrides: Partial<StreamConfig> = {}): {
       stub.promptVersion += 1;
       return { prompt_version: stub.promptVersion };
     },
-    playAudio(message: { id: string; url: string; at_ms: number; duration_sec: number }): boolean {
+    playAudio(message: DirectorStub["plays"][number]): boolean {
       stub.plays.push(message);
       return stub.connected;
     },
@@ -603,12 +611,15 @@ test("tts_direct の speak は on_air_at + audio_offset_ms に play_audio を送
   assert.equal(daemon.audioStore.get(play.id)?.bytes.byteLength, makeWav(6).byteLength);
 });
 
-test("audio_source: director では play_audio を送らない（従来どおり Director の音声を流す）", async () => {
+test("audio_source: director では音を鳴らさない（play_audio は字幕用の仮想エントリだけ）", async () => {
   const { daemon, director } = makeDaemon({ audio_source: "director" });
   stubTts(daemon);
   const result = await daemon.speak({ text: "はい", direction: null, emotion: null, commentId: null });
-  assert.equal(director.plays.length, 0);
-  assert.equal(result.play_id, undefined);
+  // 配信音声は Director のままなので wav は配らない（silent = 字幕・強調の切替だけ）。
+  assert.equal(director.plays.length, 1);
+  assert.equal(director.plays[0]!.silent, true);
+  assert.equal(director.plays[0]!.url, "");
+  assert.equal(daemon.audioStore.size, 0);
   // Director には従来どおり音声を渡す（口パクの条件付け）。
   assert.equal(result.audio_url, "https://example.test/a.wav");
 });
@@ -718,5 +729,192 @@ test("wav を返さない TTS でも speak は成功する（直接再生だけ�
   stubTts(daemon, 5, false);
   const result = await daemon.speak({ text: "はい", direction: null, emotion: null, commentId: null });
   assert.equal(result.ok, true);
+  assert.equal(result.play_id, undefined, "鳴らす wav は無い");
+  assert.equal(daemon.audioStore.size, 0);
+  // 字幕を発話開始に合わせるための仮想エントリだけは積む。
+  assert.equal(director.plays[0]!.silent, true);
+});
+
+// ---------- audio_sync: director_onset（SPEC §5.1） ----------
+
+test("config の既定は director_onset / -40dB / 12s / -6dB", () => {
+  const config = defaultStreamConfig();
+  assert.equal(config.audio_sync, "director_onset");
+  assert.equal(config.onset_threshold_db, -40);
+  assert.equal(config.onset_fallback_sec, 12);
+  assert.equal(config.tts_gain_db, -6);
+});
+
+test("hello の audio に同期方式・閾値・ゲインを載せる（ページはこれだけを見る）", () => {
+  const { daemon } = makeDaemon({ audio_sync: "scheduled", onset_threshold_db: -35, tts_gain_db: -9 });
+  const director = new DirectorController(daemon.config, daemon.character, daemon.state);
+  const socket = fakeSocket();
+  director.attach(socket as unknown as Parameters<DirectorController["attach"]>[0]);
+
+  const hello = socket.sent[0] as { type: string; audio: Record<string, unknown> };
+  assert.equal(hello.type, "hello");
+  assert.equal(hello.audio.source, "tts_direct");
+  assert.equal(hello.audio.sync, "scheduled");
+  assert.equal(hello.audio.onset_threshold_db, -35);
+  assert.equal(hello.audio.onset_fallback_sec, 12);
+  assert.equal(hello.audio.tts_gain_db, -9);
+});
+
+test("audio_started は status に trigger と推定との差を出し、予約を閉じる", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "tts_direct" });
+  stubTts(daemon, 6);
+  await daemon.speak({ text: "こんにちは", direction: null, emotion: null, commentId: null });
+  const play = director.plays[0]!;
+
+  daemon.onCompositorAudioStarted({
+    type: "audio_started",
+    id: play.id,
+    started_at_ms: play.at_ms + 4200,
+    trigger: "onset",
+    at_ms: play.at_ms,
+    duration_sec: 6,
+  });
+
+  const audio = (await daemon.status()).audio as Record<string, unknown>;
+  assert.equal(audio.sync, "director_onset");
+  assert.equal(audio.last_trigger, "onset");
+  assert.equal(audio.last_started_offset_ms, 4200);
+  assert.equal(audio.last_started_id, play.id);
+  // 鳴り始めたものは撃ち直しの対象から外れる。
+  assert.equal(audio.pending_plays, 0);
+});
+
+test("audio_started の実測は tts-schedule の jsonl に残る（次回の計測用）", async () => {
+  const { daemon, director } = makeDaemon({
+    audio_source: "tts_direct",
+    broadcast: { ...defaultStreamConfig().broadcast, record_director_audio: true },
+  });
+  stubTts(daemon, 6);
+  await daemon.speak({ text: "はい", direction: null, emotion: null, commentId: null });
+  const play = director.plays[0]!;
+  daemon.onCompositorAudioStarted({
+    type: "audio_started",
+    id: play.id,
+    started_at_ms: play.at_ms - 800,
+    trigger: "fallback",
+    at_ms: play.at_ms,
+    duration_sec: 6,
+  });
+
+  const status = (await daemon.status()).audio as Record<string, string>;
+  assert.ok(status.tts_schedule_file, "record_director_audio なら jsonl の台帳がある");
+  const lines = readFileSync(status.tts_schedule_file!, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const started = lines.filter((line: Record<string, unknown>) => line.event === "audio_started");
+  assert.equal(started.length, 1);
+  assert.equal(started[0].trigger, "fallback");
+  assert.equal(started[0].offset_ms, -800);
+});
+
+test("director_onset では推定を過ぎただけの予約を捨てない（オンセット待ちのため）", async () => {
+  const { daemon } = makeDaemon({ audio_source: "tts_direct", onset_fallback_sec: 12 });
+  stubTts(daemon, 1);
+  await daemon.speak({ text: "みじかい", direction: null, emotion: null, commentId: null });
+  // 発話は 1 秒だが、まだオンセットが来ていないので予約は残っている。
+  const audio = (await daemon.status()).audio as Record<string, unknown>;
+  assert.equal(audio.pending_plays, 1);
+});
+
+// ---------- 字幕・強調を実際の発話開始に同期（SPEC §5.1） ----------
+
+test("director_onset では字幕・強調を play_audio に載せ、on_air_at では切り替えない", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "tts_direct" });
+  stubTts(daemon, 6);
+  daemon.state.addComment(comment("c1", new Date().toISOString()));
+
+  await daemon.speak({ text: "こんにちは", direction: null, emotion: null, commentId: "c1" });
+
+  const play = director.plays[0]!;
+  assert.equal(play.subtitle, "こんにちは");
+  assert.equal(play.highlight_comment_id, "c1");
+  // まだ鳴っていないので字幕も強調も出ていない（推定で先出ししない）。
+  assert.equal(daemon.overlay.snapshot.subtitle, null);
+  assert.equal(daemon.overlay.snapshot.highlight, null);
+});
+
+test("audio_started で字幕と強調が切り替わる", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "tts_direct" });
+  stubTts(daemon, 6);
+  daemon.state.addComment(comment("c1", new Date().toISOString()));
+  await daemon.speak({ text: "こんにちは", direction: null, emotion: null, commentId: "c1" });
+  const play = director.plays[0]!;
+
+  daemon.onCompositorAudioStarted({
+    type: "audio_started",
+    id: play.id,
+    started_at_ms: Date.now(),
+    trigger: "onset",
+    at_ms: play.at_ms,
+    duration_sec: 6,
+  });
+
+  assert.equal(daemon.overlay.snapshot.subtitle, "こんにちは");
+  assert.equal(daemon.overlay.snapshot.highlight, "c1");
+});
+
+test("audio_source: director でも字幕用の仮想エントリを FIFO に積む（音は鳴らさない）", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "director" });
+  stubTts(daemon, 5);
+
+  const result = await daemon.speak({ text: "やあ", direction: null, emotion: null, commentId: null });
+
+  assert.equal(director.plays.length, 1, "director でも play_audio は送る（字幕用）");
+  const play = director.plays[0]!;
+  assert.equal(play.silent, true);
+  assert.equal(play.url, "", "wav は配らない");
+  assert.equal(play.subtitle, "やあ");
+  // Director には従来どおり音声を渡す（配信音声も Director のまま）。
+  assert.equal(result.audio_url, "https://example.test/a.wav");
+  assert.equal(daemon.overlay.snapshot.subtitle, null);
+
+  daemon.onCompositorAudioStarted({
+    type: "audio_started",
+    id: play.id,
+    started_at_ms: Date.now(),
+    trigger: "onset",
+    at_ms: play.at_ms,
+    duration_sec: 5,
+  });
+  assert.equal(daemon.overlay.snapshot.subtitle, "やあ");
+});
+
+test("voice_mode: native（wav なし）でも字幕用の仮想エントリは積む", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "tts_direct" });
+  stubTts(daemon, 5, false);
+  await daemon.speak({ text: "はい", direction: null, emotion: null, commentId: null });
+  assert.equal(director.plays.length, 1);
+  assert.equal(director.plays[0]!.silent, true);
+  assert.equal(director.plays[0]!.subtitle, "はい");
+});
+
+test("audio_sync: scheduled は従来どおりデーモンのタイマーが切り替える", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "tts_direct", audio_sync: "scheduled" });
+  stubTts(daemon, 6);
+  await daemon.speak({ text: "こんにちは", direction: null, emotion: null, commentId: null });
+  // 字幕は play_audio に載せない（compositor と二重に切り替えないため）。
+  assert.equal(director.plays[0]!.subtitle, undefined);
+  assert.equal(director.plays[0]!.silent, undefined);
+});
+
+test("audio_sync: scheduled で director なら play_audio は送らない（従来どおり）", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "director", audio_sync: "scheduled" });
+  stubTts(daemon, 5);
+  await daemon.speak({ text: "やあ", direction: null, emotion: null, commentId: null });
   assert.equal(director.plays.length, 0);
+});
+
+test("reset は字幕用の仮想エントリも捨てる", async () => {
+  const { daemon, director } = makeDaemon({ audio_source: "director" });
+  stubTts(daemon, 5);
+  await daemon.speak({ text: "ひとつめ", direction: null, emotion: null, commentId: null });
+  await daemon.speak({ text: "ふたつめ", direction: null, emotion: null, commentId: null });
+
+  const result = await daemon.restartSession("見た目が崩れた", "reset");
+  assert.equal(director.cancels, 1);
+  assert.equal(result.audio_cancelled, 2);
+  assert.equal((await daemon.status()).audio && ((await daemon.status()).audio as Record<string, unknown>).pending_plays, 0);
 });

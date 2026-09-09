@@ -7,7 +7,7 @@ import type {
   ToOverlayMessage,
   ToViewerMessage,
 } from "../src/shared/protocol.ts";
-import { AudioMix } from "./lib/audio-mix.ts";
+import { AudioMix, DEFAULT_AUDIO_SETUP } from "./lib/audio-mix.ts";
 import { DaemonSocket } from "./lib/daemon-socket.ts";
 import { DirectorSession } from "./lib/director-session.ts";
 import { MediaStage } from "./lib/media-stage.ts";
@@ -39,7 +39,9 @@ const numberParam = (name: string, fallback: number): number => {
 const WIDTH = numberParam("w", 1280);
 const HEIGHT = numberParam("h", 720);
 const FPS = numberParam("fps", 30);
-const VIDEO_BITRATE = numberParam("vb", 6_000_000);
+const VIDEO_BITRATE = numberParam("vb", 4_500_000);
+/** canvas を描き直す間隔（ms）。`broadcast.fps` を超えて描いても送出には乗らない。 */
+const FRAME_INTERVAL_MS = 1000 / FPS;
 const RECORD = params.get("record") !== "0";
 
 const canvas = document.getElementById("stage") as HTMLCanvasElement;
@@ -63,7 +65,7 @@ let overlayState: OverlayState = EMPTY_OVERLAY_STATE;
  * 音声設定（SPEC §5.1）。デーモンの `hello` で上書きされるまでは
  * `config/stream.yaml` の既定（tts_direct・別録りなし）と同じ扱いにする。
  */
-let audioSetup: AudioSetup = { source: "tts_direct", record_director_audio: false };
+let audioSetup: AudioSetup = DEFAULT_AUDIO_SETUP;
 /** Director 音声だけの別録り（解析用）。record_director_audio のときだけ動かす。 */
 let directorAudioUplink: MediaUplink | null = null;
 /** 今デーモンが有効だと思っているセッション番号。古い control は捨てる。 */
@@ -92,17 +94,23 @@ function drawVideo(): void {
 }
 
 let lastFrameAtMs = performance.now();
+/**
+ * `broadcast.fps` に間引いて描く。requestAnimationFrame は画面の更新に合わせて
+ * 60〜120Hz で回るが、送出は fps でしか取らないので描くだけ無駄で、
+ * 主スレッドが詰まると MediaRecorder の音声まで途切れる。
+ */
 function renderFrame(now: number): void {
-  const deltaMs = Math.min(100, now - lastFrameAtMs);
+  requestAnimationFrame(renderFrame);
+  const deltaMs = now - lastFrameAtMs;
+  // 1ms の余裕を見ておかないと、フレーム間隔がわずかに足りず 1 回おきに落ちる。
+  if (deltaMs < FRAME_INTERVAL_MS - 1) return;
   lastFrameAtMs = now;
   frames += 1;
 
   context.fillStyle = "#000000";
   context.fillRect(0, 0, WIDTH, HEIGHT);
   drawVideo();
-  overlay.draw(context, overlayState, WIDTH, HEIGHT, deltaMs);
-
-  requestAnimationFrame(renderFrame);
+  overlay.draw(context, overlayState, WIDTH, HEIGHT, Math.min(100, deltaMs));
 }
 requestAnimationFrame(renderFrame);
 
@@ -132,6 +140,62 @@ const daemon = new DaemonSocket<ToViewerMessage, FromViewerMessage>("/ws/viewer"
   onClose: () => log("daemon disconnected — retrying"),
   onMessage: (message) => handleDaemonMessage(message),
 });
+
+/**
+ * `play_audio` に載ってきた字幕・強調。**その発話が実際に鳴り始めた瞬間**に反映する。
+ *
+ * 推定 `on_air_at` は Director が口パクを始める時刻と −0.1〜+9.8 秒ずれるので、
+ * デーモンのタイマーで切り替えると字幕だけが先に出てしまう（SPEC §5.1）。
+ */
+interface PendingOverlay {
+  subtitle: string | null;
+  highlight: string | null;
+}
+const pendingOverlay = new Map<string, PendingOverlay>();
+/** いま出している字幕。消すときに「まだ自分のものか」を確かめる。 */
+let shownSubtitle: string | null = null;
+let subtitleTimer: number | null = null;
+
+/** 発話が終わってから字幕を消すまでの余韻（ms）。 */
+const SUBTITLE_TAIL_MS = 500;
+
+function setOverlay(message: ToOverlayMessage): void {
+  overlayState = applyOverlayMessage(overlayState, message);
+}
+
+/** 鳴り始めた発話の字幕・強調に切り替え、発話長 + 余韻で字幕を消す。 */
+function showOverlayFor(id: string, durationSec: number): void {
+  const pending = pendingOverlay.get(id);
+  if (!pending) return;
+  pendingOverlay.delete(id);
+  if (pending.highlight !== null) setOverlay({ type: "highlight", commentId: pending.highlight });
+  setOverlay({ type: "subtitle", text: pending.subtitle });
+  shownSubtitle = pending.subtitle;
+
+  if (subtitleTimer !== null) window.clearTimeout(subtitleTimer);
+  subtitleTimer = window.setTimeout(() => {
+    subtitleTimer = null;
+    // 後続の発話が既に差し替えていたら触らない。
+    if (overlayState.subtitle === shownSubtitle) setOverlay({ type: "subtitle", text: null });
+  }, durationSec * 1000 + SUBTITLE_TAIL_MS);
+}
+
+/** 実際に鳴り始めた時刻をデーモンへ返す（口パクとのずれの実測。SPEC §5.1）。 */
+audio.onStarted = (started) => {
+  showOverlayFor(started.id, started.durationSec);
+  daemon.send({
+    type: "audio_started",
+    id: started.id,
+    started_at_ms: Math.round(started.startedAtMs),
+    trigger: started.trigger,
+    at_ms: Math.round(started.atMs),
+    duration_sec: Math.round(started.durationSec * 1000) / 1000,
+  });
+  log(
+    `started ${started.id} (${started.trigger}): ` +
+      `推定との差 ${Math.round(started.startedAtMs - started.atMs)}ms`,
+  );
+};
 
 const session = new DirectorSession(client, {
   onMedia: (incoming) => {
@@ -167,8 +231,12 @@ function closeSession(): void {
  */
 function applyAudioSetup(setup: AudioSetup): void {
   audioSetup = setup;
-  audio.setSource(setup.source);
-  log(`audio source: ${setup.source}${setup.record_director_audio ? " (director 音声を別録り)" : ""}`);
+  audio.configure(setup);
+  log(
+    `audio source: ${setup.source} / sync: ${setup.sync}` +
+      ` (gain ${setup.tts_gain_db}dB, onset ${setup.onset_threshold_db}dB, fallback ${setup.onset_fallback_sec}s)` +
+      (setup.record_director_audio ? " / director 音声を別録り" : ""),
+  );
   if (setup.record_director_audio && !directorAudioUplink) {
     // 送出用のゲインより手前から取るので、tts_direct でも Director の声がそのまま録れる。
     directorAudioUplink = new MediaUplink(audio.directorOnlyStream(), {
@@ -181,12 +249,26 @@ function applyAudioSetup(setup: AudioSetup): void {
   }
 }
 
-/** `play_audio`：指定時刻に wav を鳴らし、実際の時刻をデーモンへ返す。 */
+/**
+ * `play_audio`：wav を鳴らす（`director_onset` ではキューに積んで口パクの開始を待つ）。
+ * 予定と実際の時刻はどちらもデーモンへ返す（`audio_scheduled` / `audio_started`）。
+ */
 function playAudio(message: PlayAudioMessage): void {
+  // 字幕・強調は鳴り始めるまで持っておく（デーモンが載せてきたときだけ）。
+  if (message.subtitle !== undefined || message.highlight_comment_id !== undefined) {
+    pendingOverlay.set(message.id, {
+      subtitle: message.subtitle ?? null,
+      highlight: message.highlight_comment_id ?? null,
+    });
+  }
   void audio
-    .play(message.id, message.url, message.at_ms, message.duration_sec)
+    .play(message.id, message.url, message.at_ms, message.duration_sec, message.silent === true)
     .then((scheduled) => {
       if (!scheduled) return;
+      if (scheduled.queued) {
+        log(`queued ${scheduled.id}: Director のオンセット待ち（${scheduled.durationSec.toFixed(2)}s）`);
+        return;
+      }
       daemon.send({
         type: "audio_scheduled",
         id: scheduled.id,
@@ -216,7 +298,9 @@ function handleDaemonMessage(message: ToViewerMessage): void {
       playAudio(message);
       break;
     case "cancel_audio": {
-      const stopped = audio.stop(message.id);
+      if (message.id === undefined) pendingOverlay.clear();
+      else pendingOverlay.delete(message.id);
+      const stopped = audio.cancel(message.id);
       log(`cancel_audio${message.id ? ` ${message.id}` : ""}: ${stopped} 件止めた`);
       break;
     }
@@ -269,7 +353,8 @@ setInterval(() => {
     `${WIDTH}x${HEIGHT}@${FPS}`,
     `draw ${fpsMeasured}fps`,
     `session ${currentSeq}:${session.state ?? "-"}`,
-    `audio ${audioSetup.source}${audio.pendingPlays > 0 ? ` +${audio.pendingPlays}` : ""}`,
+    `audio ${audioSetup.source}/${audioSetup.sync}${audio.pendingPlays > 0 ? ` +${audio.pendingPlays}` : ""}` +
+      (audioSetup.sync === "director_onset" ? ` dir ${audio.directorLevelDb.toFixed(0)}dB` : ""),
     RECORD
       ? `uplink ${stats.connected ? "on" : "off"} ${stats.chunks}chunks ${(stats.bytes / 1e6).toFixed(1)}MB avg ${stats.averageIntervalMs}ms`
       : "uplink disabled",
@@ -277,7 +362,7 @@ setInterval(() => {
 }, 1000);
 
 // hello が来るまでは config/stream.yaml の既定と同じ扱いにしておく。
-audio.setSource(audioSetup.source);
+audio.configure(audioSetup);
 void audio.resume();
 daemon.connect();
 overlaySocket.connect();

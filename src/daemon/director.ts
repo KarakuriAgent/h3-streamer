@@ -91,6 +91,11 @@ export class DirectorController {
    * デーモンが `tts_direct` の再生時刻を実測に合わせて撃ち直すために使う。
    */
   onAudioApplied: ((message: DirectorServerMessage) => void) | null = null;
+  /**
+   * compositor が実際に TTS を鳴らし始めたときのフック（`audio_started`）。
+   * デーモンは推定との差を `tts-schedule-<run>.jsonl` と `h3 status` に残す。
+   */
+  onAudioStarted: ((message: Extract<FromViewerMessage, { type: "audio_started" }>) => void) | null = null;
 
   constructor(
     private readonly config: StreamConfig,
@@ -107,6 +112,10 @@ export class DirectorController {
     return {
       source: this.config.audio_source,
       record_director_audio: this.config.broadcast.record_director_audio,
+      sync: this.config.audio_sync,
+      onset_threshold_db: this.config.onset_threshold_db,
+      onset_fallback_sec: this.config.onset_fallback_sec,
+      tts_gain_db: this.config.tts_gain_db,
     };
   }
 
@@ -188,6 +197,15 @@ export class DirectorController {
           `audio_scheduled ${message.id}: at=${message.at_ms} starts=${message.starts_at_ms} ` +
             `(${message.starts_at_ms - message.at_ms}ms) skipped=${message.skipped_sec}s`,
         );
+        break;
+      case "audio_started":
+        // 口パク（Director 音声のオンセット）に合わせて鳴らした実測。次回の計測用に必ず残す。
+        this.state.log(
+          "info",
+          `audio_started ${message.id} (${message.trigger}): started=${message.started_at_ms} ` +
+            `at=${message.at_ms} 差=${message.started_at_ms - message.at_ms}ms`,
+        );
+        this.onAudioStarted?.(message);
         break;
       case "audio_error":
         this.state.recordError(`compositor audio ${message.id}: ${message.message}`);

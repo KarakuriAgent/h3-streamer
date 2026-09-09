@@ -15,7 +15,7 @@ voice_mode: tts             # tts | native
 #   tts_direct: Director の音声トラックはゲイン 0（口パクの条件付け専用）にして、
 #               TTS の wav を compositor 内で直接再生する。音質が元 wav のまま保たれる。
 #   director:   Director が返す音声トラックをそのまま流す（モデルが再合成するので劣化する）。
-audio_source: tts_direct
+audio_source: director
 audio_offset_ms: 0          # tts_direct の再生時刻の補正（ms）。正で遅らせる
 
 # YouTube の初回ポーリングは過去のコメントも全部返すので、
@@ -65,7 +65,7 @@ broadcast:
   headless: true
   gpu: false                # Chromium に GPU を使わせる（使える環境なら true）
   chunk_ms: 500             # MediaRecorder の timeslice
-  record_director_audio: false  # Director 音声トラックだけを別録りして state/analysis に残す（口パクのずれ計測用）
+  record_director_audio: false # Director 音声トラックだけを別録りして state/analysis に残す（口パクのずれ計測用）
 
 # --direction の禁止語（SPEC §3.1）。単純な部分一致（大文字小文字は無視）。
 # 1 つでも当たったら speak / direct は送信せず direction_blocked を返す。

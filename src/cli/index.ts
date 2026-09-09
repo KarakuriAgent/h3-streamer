@@ -224,8 +224,10 @@ program
   .option("--highlight <id>", "強調するコメント ID（none で解除）")
   .option("--subtitle <text>", "字幕（none で消す）")
   .option("--comments <onoff>", "コメント一覧の表示 on|off")
-  .action(async (options: { highlight?: string; subtitle?: string; comments?: string }) => {
+  .option("--subtitles <onoff>", "発話に連動する自動字幕 on|off")
+  .action(async (options: { highlight?: string; subtitle?: string; comments?: string; subtitles?: string }) => {
     const body: Record<string, unknown> = {};
+    if (options.subtitles !== undefined) body.subtitles = options.subtitles !== "off";
     if (options.highlight !== undefined) body.highlight = options.highlight === "none" ? null : options.highlight;
     if (options.subtitle !== undefined) body.subtitle = options.subtitle === "none" ? null : options.subtitle;
     if (options.comments !== undefined) body.comments = options.comments !== "off";

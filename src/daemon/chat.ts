@@ -666,7 +666,15 @@ export class ChatPoller {
     const ng = containsNgWord(c.text, this.opts.ngWords);
     if (ng) return `ng_word:${ng}`;
     if (isUrlOnly(c.text)) return 'url_only';
-    if (c.authorChannelId && this.recentAuthors.includes(c.authorChannelId)) return 'repeat_author';
+    // 同一ユーザーの連投：直近 REPEAT_AUTHOR_WINDOW 件の採用コメントが全て同じ人のときだけ弾く
+    // （視聴者が 1 人しかいないテスト配信などで全部捨ててしまわないように）。
+    if (
+      c.authorChannelId &&
+      this.recentAuthors.length >= REPEAT_AUTHOR_WINDOW &&
+      this.recentAuthors.every((id) => id === c.authorChannelId)
+    ) {
+      return 'repeat_author';
+    }
     return null;
   }
 

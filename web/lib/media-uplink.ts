@@ -38,7 +38,8 @@ const DEFAULTS = {
   path: "/ws/media",
   mimeType: "video/webm;codecs=vp8,opus",
   timesliceMs: 500,
-  videoBitsPerSecond: 6_000_000,
+  // config/stream.yaml: broadcast.video_bitrate_k の既定と揃える（compositor が vb= で上書きする）。
+  videoBitsPerSecond: 4_500_000,
   audioBitsPerSecond: 160_000,
   retryMs: 2000,
 };

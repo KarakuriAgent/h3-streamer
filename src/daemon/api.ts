@@ -156,6 +156,10 @@ export function createApiRouter(daemon: Daemon): Router {
     if (typeof body.subtitle === "string") daemon.overlay.setSubtitle(body.subtitle);
     if (body.subtitle === null) daemon.overlay.setSubtitle(null);
     if (typeof body.comments === "boolean") daemon.overlay.setCommentsVisible(body.comments);
+    if (typeof body.subtitles === "boolean") {
+      daemon.overlay.subtitlesEnabled = body.subtitles;
+      if (!body.subtitles) daemon.overlay.setSubtitle(null);
+    }
     response.json({ ok: true, overlay: daemon.overlay.snapshot });
   }));
 
